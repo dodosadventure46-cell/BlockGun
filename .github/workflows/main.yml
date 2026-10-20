@@ -1,0 +1,67 @@
+name: Build APK dari ZIP
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ekstrak ZIP proyek
+        run: |
+          ZIP=$(ls *.zip 2>/dev/null | head -n 1)
+          if [ -z "$ZIP" ]; then
+            echo "Tidak ada file .zip di root repo. Upload BlokGun.zip ke root repo."
+            exit 1
+          fi
+          echo "Memakai: $ZIP"
+          mkdir -p src_extract
+          unzip -q -o "$ZIP" -d src_extract
+          SETTINGS=$(find src_extract -maxdepth 3 \( -name settings.gradle.kts -o -name settings.gradle \) | head -n 1)
+          if [ -z "$SETTINGS" ]; then
+            echo "settings.gradle(.kts) tidak ditemukan di dalam zip."
+            exit 1
+          fi
+          PROJ=$(dirname "$SETTINGS")
+          echo "PROJ=$PROJ" >> "$GITHUB_ENV"
+          echo "Folder proyek: $PROJ"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.5
+
+      - name: Buat keystore jika belum ada
+        run: |
+          cd "$PROJ"
+          if [ ! -f app/release.jks ]; then
+            keytool -genkeypair -keystore app/release.jks -storepass blokgun123 -keypass blokgun123 \
+              -alias blokgun -keyalg RSA -keysize 2048 -validity 36500 \
+              -dname "CN=BlokGun, O=BlokGun, C=ID"
+          fi
+
+      - name: Build APK release
+        run: |
+          cd "$PROJ"
+          gradle assembleRelease --no-daemon --warning-mode=none
+
+      - name: Rapikan hasil
+        run: |
+          mkdir -p out
+          cp "$PROJ/app/build/outputs/apk/release/app-release.apk" out/BlokGun.apk
+          ls -l out
+
+      - name: Upload APK (kompresi maksimal)
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlokGun-APK
+          path: out/BlokGun.apk
+          compression-level: 9
